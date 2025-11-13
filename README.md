@@ -1,18 +1,20 @@
 # OpenPecha Search API
 
-A powerful search API for Tibetan texts using hybrid, BM25, and semantic search powered by Milvus vector database and Google Gemini embeddings.
+A powerful search API for Tibetan texts using hybrid, BM25, semantic, and exact match search powered by Milvus vector database and Google Gemini embeddings.
 
 ## Features
 
-- 🔍 **Three Search Methods**:
-  - **Hybrid Search**: Combines BM25 and semantic search using RRF (Reciprocal Rank Fusion)
+- 🔍 **Four Search Methods**:
+  - **Hybrid Search**: Combines BM25 and semantic search using RRF (Reciprocal Rank Fusion) - default
   - **BM25 Search**: Traditional keyword-based search (sparse vector)
   - **Semantic Search**: AI-powered meaning-based search (dense vector)
+  - **Exact Match**: Find exact phrases in text using PHRASE_MATCH
 
 - 🎯 **Filtering**: Filter results by title field
 - ⚡ **Fast & Scalable**: Built with FastAPI and Milvus
 - 🔒 **Secure**: Environment-based credential management
 - 📚 **Auto Documentation**: Interactive API docs at `/docs`
+- 🔄 **Unified Endpoint**: Single `/search` endpoint with search type parameter
 
 ## Prerequisites
 
@@ -71,21 +73,28 @@ Once the server is running, visit:
 
 ## API Endpoints
 
-### 1. Hybrid Search
-**POST** `/search/hybrid`
+### 1. Unified Search
+**POST** `/search`
 
-Combines BM25 and semantic search for best results.
+Single unified endpoint supporting all search types.
 
 **Request Body**:
 ```json
 {
   "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+  "search_type": "hybrid",
   "limit": 10,
   "filter": {
     "title": "Dorjee"
   }
 }
 ```
+
+**Search Types**:
+- `hybrid` - Combines BM25 and semantic search (default)
+- `bm25` - Keyword-based search
+- `semantic` - Meaning-based search
+- `exact` - Exact phrase matching
 
 **Response**:
 ```json
@@ -106,39 +115,7 @@ Combines BM25 and semantic search for best results.
 }
 ```
 
-### 2. BM25 Search
-**POST** `/search/bm25`
-
-Traditional keyword-based search. Best for exact term matching.
-
-**Request Body**:
-```json
-{
-  "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-  "limit": 10,
-  "filter": {
-    "title": "Dorjee"
-  }
-}
-```
-
-### 3. Semantic Search
-**POST** `/search/semantic`
-
-AI-powered semantic search. Best for finding conceptually similar content.
-
-**Request Body**:
-```json
-{
-  "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-  "limit": 10,
-  "filter": {
-    "title": "Dorjee"
-  }
-}
-```
-
-### 4. Health Check
+### 2. Health Check
 **GET** `/health`
 
 Check API health status.
@@ -157,6 +134,7 @@ Check API health status.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `query` | string | Yes | - | The search query text |
+| `search_type` | string | No | `"hybrid"` | Search type: `"hybrid"`, `"bm25"`, `"semantic"`, or `"exact"` |
 | `limit` | integer | No | 10 | Maximum results to return (1-100) |
 | `filter.title` | string | No | - | Filter results by title |
 
@@ -164,9 +142,9 @@ Check API health status.
 
 ### Using cURL
 
-**Hybrid Search**:
+**Hybrid Search (default)**:
 ```bash
-curl -X POST "http://localhost:8000/search/hybrid" \
+curl -X POST "http://localhost:8000/search" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
@@ -174,12 +152,46 @@ curl -X POST "http://localhost:8000/search/hybrid" \
   }'
 ```
 
-**With Filter**:
+**BM25 Search**:
 ```bash
-curl -X POST "http://localhost:8000/search/bm25" \
+curl -X POST "http://localhost:8000/search" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+    "search_type": "bm25",
+    "limit": 10
+  }'
+```
+
+**Semantic Search**:
+```bash
+curl -X POST "http://localhost:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "how to worry less?",
+    "search_type": "semantic",
+    "limit": 10
+  }'
+```
+
+**Exact Match Search**:
+```bash
+curl -X POST "http://localhost:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+    "search_type": "exact",
+    "limit": 10
+  }'
+```
+
+**With Filter**:
+```bash
+curl -X POST "http://localhost:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+    "search_type": "hybrid",
     "limit": 10,
     "filter": {
       "title": "Dorjee"
@@ -192,36 +204,57 @@ curl -X POST "http://localhost:8000/search/bm25" \
 ```python
 import requests
 
-url = "http://localhost:8000/search/hybrid"
+url = "http://localhost:8000/search"
+
+# Hybrid search (default)
 payload = {
     "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+    "limit": 10
+}
+
+response = requests.post(url, json=payload)
+results = response.json()
+
+print(f"Found {results['count']} results using {results['search_type']} search")
+for result in results['results']:
+    print(f"ID: {result['id']}, Distance: {result['distance']}")
+    print(f"Title: {result['entity']['title']}")
+
+# Exact match search
+exact_payload = {
+    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+    "search_type": "exact",
+    "limit": 10
+}
+
+response = requests.post(url, json=exact_payload)
+results = response.json()
+print(f"\nExact match found {results['count']} results")
+
+# With filters
+filtered_payload = {
+    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+    "search_type": "semantic",
     "limit": 10,
     "filter": {
         "title": "Dorjee"
     }
 }
 
-response = requests.post(url, json=payload)
+response = requests.post(url, json=filtered_payload)
 results = response.json()
-
-print(f"Found {results['count']} results")
-for result in results['results']:
-    print(f"ID: {result['id']}, Distance: {result['distance']}")
-    print(f"Title: {result['entity']['title']}")
 ```
 
 ### Using JavaScript
 
 ```javascript
+// Hybrid search (default)
 const searchData = {
   query: "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-  limit: 10,
-  filter: {
-    title: "Dorjee"
-  }
+  limit: 10
 };
 
-fetch('http://localhost:8000/search/semantic', {
+fetch('http://localhost:8000/search', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -231,7 +264,48 @@ fetch('http://localhost:8000/search/semantic', {
   .then(response => response.json())
   .then(data => {
     console.log('Search Results:', data);
-    console.log(`Found ${data.count} results`);
+    console.log(`Found ${data.count} results using ${data.search_type} search`);
+  });
+
+// Exact match search
+const exactSearchData = {
+  query: "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+  search_type: "exact",
+  limit: 10
+};
+
+fetch('http://localhost:8000/search', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(exactSearchData),
+})
+  .then(response => response.json())
+  .then(data => {
+    console.log('Exact Match Results:', data);
+  });
+
+// Semantic search with filter
+const semanticSearchData = {
+  query: "how to worry less?",
+  search_type: "semantic",
+  limit: 10,
+  filter: {
+    title: "Dorjee"
+  }
+};
+
+fetch('http://localhost:8000/search', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(semanticSearchData),
+})
+  .then(response => response.json())
+  .then(data => {
+    console.log('Semantic Search Results:', data);
   });
 ```
 
@@ -240,8 +314,9 @@ fetch('http://localhost:8000/search/semantic', {
 | Method | Best For | Speed | Accuracy |
 |--------|----------|-------|----------|
 | **Hybrid** | General purpose, balanced results | Medium | High |
-| **BM25** | Exact keyword matching, term frequency | Fast | Good for keywords |
+| **BM25** | Keyword matching, term frequency | Fast | Good for keywords |
 | **Semantic** | Conceptual similarity, meaning-based | Medium | High for context |
+| **Exact** | Finding exact quotes or phrases | Fast | Perfect for exact matches |
 
 ## Project Structure
 

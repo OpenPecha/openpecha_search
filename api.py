@@ -44,8 +44,7 @@ app.add_middleware(
 # Initialize Milvus client
 milvus_client = MilvusClient(
     uri=MILVUS_URI,
-    token=MILVUS_TOKEN,
-    collection_name=MILVUS_COLLECTION_NAME
+    token=MILVUS_TOKEN
 )
 
 # Initialize Gemini client
@@ -60,6 +59,7 @@ class SearchFilter(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str = Field(..., description="The search query text", min_length=1)
+    search_type: str = Field("hybrid", description="Type of search: 'hybrid', 'bm25', 'semantic', or 'exact'")
     limit: int = Field(10, description="Maximum number of results to return", ge=1, le=100)
     filter: Optional[SearchFilter] = Field(None, description="Optional filters to apply")
 
@@ -132,128 +132,171 @@ async def root():
         "message": "OpenPecha Search API",
         "version": "1.0.0",
         "endpoints": {
-            "hybrid": "/search/hybrid",
-            "bm25": "/search/bm25",
-            "semantic": "/search/semantic"
+            "search": "/search"
+        },
+        "search_types": {
+            "hybrid": "Combined BM25 + semantic search (default)",
+            "bm25": "Keyword-based search",
+            "semantic": "Meaning-based search",
+            "exact": "Exact phrase matching"
         },
         "docs": "/docs"
     }
 
 
-@app.post("/search/hybrid", response_model=SearchResponse)
-async def hybrid_search(request: SearchRequest):
+@app.post("/search", response_model=SearchResponse)
+async def unified_search(request: SearchRequest):
     """
-    Perform hybrid search combining BM25 (sparse) and semantic (dense) search.
-    Uses RRF (Reciprocal Rank Fusion) to merge results.
+    Unified search endpoint supporting multiple search types.
+    
+    Search types:
+    - hybrid: Combines BM25 (sparse) and semantic (dense) search using RRF ranking (default)
+    - bm25: Keyword-based matching, best for exact term matching
+    - semantic: Meaning-based matching, best for conceptually similar content
+    - exact: Exact phrase matching using PHRASE_MATCH, best for finding exact quotes
     """
     try:
-        # Get embedding for semantic search
-        embedding = get_embedding(request.query)
+        search_type = request.search_type.lower()
+        
+        # Validate search type
+        valid_types = ["hybrid", "bm25", "semantic", "exact"]
+        if search_type not in valid_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid search_type. Must be one of: {', '.join(valid_types)}"
+            )
         
         # Build filter expression
         filter_expr = build_filter_expression(request.filter)
         
-        # BM25 search parameters
-        search_param_1 = {
-            "data": [request.query],
-            "anns_field": "sparce_vector",
-            "param": {},
-            "limit": request.limit
-        }
-        if filter_expr:
-            search_param_1["expr"] = filter_expr
-        request_1 = AnnSearchRequest(**search_param_1)
-        
-        # Semantic search parameters
-        search_param_2 = {
-            "data": [embedding],
-            "anns_field": "dense_vector",
-            "param": {"drop_ratio_search": 0.2},
-            "limit": request.limit
-        }
-        if filter_expr:
-            search_param_2["expr"] = filter_expr
-        request_2 = AnnSearchRequest(**search_param_2)
-        
-        # Perform hybrid search
-        ranker = RRFRanker()
-        results = milvus_client.hybrid_search(
-            collection_name=MILVUS_COLLECTION_NAME,
-            reqs=[request_1, request_2],
-            ranker=ranker,
-            limit=request.limit,
-            output_fields=['title']
-        )
-        
-        return format_results(results, request.query, "hybrid")
-        
+        # Route to appropriate search logic
+        if search_type == "hybrid":
+            return await perform_hybrid_search(request.query, request.limit, filter_expr)
+        elif search_type == "bm25":
+            return await perform_bm25_search(request.query, request.limit, filter_expr)
+        elif search_type == "semantic":
+            return await perform_semantic_search(request.query, request.limit, filter_expr)
+        elif search_type == "exact":
+            return await perform_exact_search(request.query, request.limit, filter_expr)
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Hybrid search failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
-@app.post("/search/bm25", response_model=SearchResponse)
-async def bm25_search(request: SearchRequest):
-    """
-    Perform BM25 search (sparse vector search) for keyword-based matching.
-    Best for exact term matching and traditional search.
-    """
-    try:
-        # Build filter expression
-        filter_expr = build_filter_expression(request.filter)
-        
-        # Prepare search parameters
-        search_params = {
-            "collection_name": MILVUS_COLLECTION_NAME,
-            "data": [request.query],
-            "anns_field": "sparce_vector",
-            "limit": request.limit,
-            "output_fields": ['title']
-        }
-        
-        if filter_expr:
-            search_params["filter"] = filter_expr
-        
-        # Perform BM25 search
-        results = milvus_client.search(**search_params)
-        
-        return format_results(results, request.query, "bm25")
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"BM25 search failed: {str(e)}")
+# Internal search functions
+async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+    """Perform hybrid search combining BM25 and semantic search."""
+    # Get embedding for semantic search
+    embedding = get_embedding(query)
+    
+    # BM25 search parameters
+    search_param_1 = {
+        "data": [query],
+        "anns_field": "sparce_vector",
+        "param": {},
+        "limit": limit
+    }
+    if filter_expr:
+        search_param_1["expr"] = filter_expr
+    request_1 = AnnSearchRequest(**search_param_1)
+    
+    # Semantic search parameters
+    search_param_2 = {
+        "data": [embedding],
+        "anns_field": "dense_vector",
+        "param": {"drop_ratio_search": 0.2},
+        "limit": limit
+    }
+    if filter_expr:
+        search_param_2["expr"] = filter_expr
+    request_2 = AnnSearchRequest(**search_param_2)
+    
+    # Perform hybrid search
+    ranker = RRFRanker()
+    results = milvus_client.hybrid_search(
+        collection_name=MILVUS_COLLECTION_NAME,
+        reqs=[request_1, request_2],
+        ranker=ranker,
+        limit=limit,
+        output_fields=['text']  # Request text field instead
+    )
+    
+    return format_results(results, query, "hybrid")
 
 
-@app.post("/search/semantic", response_model=SearchResponse)
-async def semantic_search(request: SearchRequest):
-    """
-    Perform semantic search (dense vector search) for meaning-based matching.
-    Best for finding conceptually similar content regardless of exact wording.
-    """
-    try:
-        # Get embedding
-        embedding = get_embedding(request.query)
-        
-        # Build filter expression
-        filter_expr = build_filter_expression(request.filter)
-        
-        # Prepare search parameters
-        search_params = {
-            "collection_name": MILVUS_COLLECTION_NAME,
-            "data": [embedding],
-            "anns_field": "dense_vector",
-            "limit": request.limit,
-            "output_fields": ['title']
-        }
-        
-        if filter_expr:
-            search_params["filter"] = filter_expr
-        
-        # Perform semantic search
-        results = milvus_client.search(**search_params)
-        
-        return format_results(results, request.query, "semantic")
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Semantic search failed: {str(e)}")
+async def perform_bm25_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+    """Perform BM25 (sparse vector) search."""
+    # Prepare search parameters
+    search_params = {
+        "collection_name": MILVUS_COLLECTION_NAME,
+        "data": [query],
+        "anns_field": "sparce_vector",
+        "limit": limit,
+        "output_fields": ['text']  # Request text field instead
+    }
+    
+    if filter_expr:
+        search_params["filter"] = filter_expr
+    
+    # Perform BM25 search
+    results = milvus_client.search(**search_params)
+    
+    return format_results(results, query, "bm25")
+
+
+async def perform_semantic_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+    """Perform semantic (dense vector) search."""
+    # Get embedding
+    embedding = get_embedding(query)
+    
+    # Prepare search parameters
+    search_params = {
+        "collection_name": MILVUS_COLLECTION_NAME,
+        "data": [embedding],
+        "anns_field": "dense_vector",
+        "limit": limit,
+        "output_fields": ['text']  # Request text field instead
+    }
+    
+    if filter_expr:
+        search_params["filter"] = filter_expr
+    
+    # Perform semantic search
+    results = milvus_client.search(**search_params)
+    
+    return format_results(results, query, "semantic")
+
+
+async def perform_exact_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+    """Perform exact phrase match search."""
+    # Escape single quotes in query to prevent filter syntax errors
+    escaped_query = query.replace("'", "\\'")
+    
+    # Build filter expression for exact phrase match
+    phrase_filter = f"PHRASE_MATCH(text, '{escaped_query}')"
+    
+    # Combine filters if additional filter exists
+    if filter_expr:
+        final_filter = f"{phrase_filter} && {filter_expr}"
+    else:
+        final_filter = phrase_filter
+    
+    # Prepare search parameters
+    search_params = {
+        "collection_name": MILVUS_COLLECTION_NAME,
+        "data": [query],
+        "anns_field": "sparce_vector",
+        "limit": limit,
+        "output_fields": ['text'],  # Request text field
+        "filter": final_filter
+    }
+    
+    # Perform exact match search
+    results = milvus_client.search(**search_params)
+    
+    return format_results(results, query, "exact")
 
 
 @app.get("/health")
@@ -264,6 +307,34 @@ async def health_check():
         "milvus_connected": True,
         "gemini_configured": True
     }
+
+
+@app.get("/debug/search")
+async def debug_search():
+    """Debug endpoint to test basic search functionality."""
+    try:
+        # Test basic BM25 search without any fancy options
+        results = milvus_client.search(
+            collection_name=MILVUS_COLLECTION_NAME,
+            data=["how to worry less?"],
+            anns_field="sparce_vector",
+            limit=5,
+            output_fields=["text"]
+        )
+        
+        return {
+            "status": "success",
+            "raw_results": str(results),
+            "results_type": str(type(results)),
+            "results_length": len(results),
+            "first_result": str(results[0]) if results else None
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": str(type(e))
+        }
 
 
 if __name__ == "__main__":
