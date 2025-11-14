@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -222,112 +222,62 @@ async def root():
     }
 
 
-@app.post("/search", response_model=SearchResponse)
+@app.get("/search", response_model=SearchResponse)
 async def unified_search(
-    request: SearchRequest = Body(
-        ...,
-        openapi_examples={
-            "hybrid_search": {
-                "summary": "Hybrid Search (Default)",
-                "description": "Combines BM25 and semantic search for balanced results",
-                "value": {
-                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
-                    "search_type": "hybrid",
-                    "limit": 10,
-                    "return_text": True
-                }
-            },
-            "bm25_search": {
-                "summary": "BM25 Search",
-                "description": "Keyword-based search for term frequency matching",
-                "value": {
-                    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-                    "search_type": "bm25",
-                    "limit": 5,
-                    "return_text": True
-                }
-            },
-            "semantic_search": {
-                "summary": "Semantic Search",
-                "description": "AI-powered meaning-based search",
-                "value": {
-                    "query": "how to worry less?",
-                    "search_type": "semantic",
-                    "limit": 10,
-                    "return_text": True
-                }
-            },
-            "exact_match": {
-                "summary": "Exact Phrase Match",
-                "description": "Find exact quotes using PHRASE_MATCH",
-                "value": {
-                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
-                    "search_type": "exact",
-                    "limit": 10,
-                    "return_text": True
-                }
-            },
-            "ids_only": {
-                "summary": "Return IDs Only",
-                "description": "Get only IDs and distances without text",
-                "value": {
-                    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-                    "search_type": "hybrid",
-                    "limit": 10,
-                    "return_text": False
-                }
-            },
-            "with_filter": {
-                "summary": "Search with Filter",
-                "description": "Search with title filter applied",
-                "value": {
-                    "query": "སངས་རྒྱས་",
-                    "search_type": "hybrid",
-                    "limit": 10,
-                    "return_text": True,
-                    "filter": {
-                        "title": "Dorjee"
-                    }
-                }
-            }
-        }
-    )
+    query: str = Query(..., description="The search query text", example="དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །"),
+    search_type: str = Query("hybrid", description="Type of search: 'hybrid', 'bm25', 'semantic', or 'exact'", example="hybrid"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of results to return (1-100)", example=10),
+    return_text: bool = Query(True, description="If True, return full text in results. If False, return only ID and distance", example=True),
+    title_filter: Optional[str] = Query(None, description="Optional filter by title", example=None)
 ):
     """
     Unified search endpoint supporting multiple search types.
     
-    Search types:
-    - hybrid: Combines BM25 (sparse) and semantic (dense) search using RRF ranking (default)
-    - bm25: Keyword-based matching, best for exact term matching
-    - semantic: Meaning-based matching, best for conceptually similar content
-    - exact: Exact phrase matching using PHRASE_MATCH, best for finding exact quotes
+    **Search Types:**
+    - `hybrid`: Combines BM25 (sparse) and semantic (dense) search using RRF ranking (default)
+    - `bm25`: Keyword-based matching, best for exact term matching
+    - `semantic`: Meaning-based matching, best for conceptually similar content
+    - `exact`: Exact phrase matching using PHRASE_MATCH, best for finding exact quotes
     
-    Parameters:
-    - return_text: If True (default), returns full text in results. If False, returns only ID and distance.
+    **Parameters:**
+    - `query`: The search query text (required)
+    - `search_type`: Type of search (default: "hybrid")
+    - `limit`: Maximum results to return (default: 10, max: 100)
+    - `return_text`: Return full text or just IDs (default: true)
+    - `title_filter`: Optional filter by title field
+    
+    **Examples:**
+    - Hybrid: `/search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=hybrid&limit=10`
+    - BM25: `/search?query=ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ&search_type=bm25&limit=5`
+    - Semantic: `/search?query=how to worry less?&search_type=semantic&limit=10`
+    - Exact: `/search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=exact&limit=10`
+    - IDs Only: `/search?query=test&search_type=hybrid&return_text=false`
     """
     try:
-        search_type = request.search_type.lower()
+        search_type_lower = search_type.lower()
         
         # Validate search type
         valid_types = ["hybrid", "bm25", "semantic", "exact"]
-        if search_type not in valid_types:
+        if search_type_lower not in valid_types:
             raise HTTPException(
                 status_code=400, 
                 detail=f"Invalid search_type. Must be one of: {', '.join(valid_types)}"
             )
         
-        # Build filter expression
-        filter_expr = build_filter_expression(request.filter)
+        # Build filter expression from title_filter
+        filter_expr = None
+        if title_filter:
+            filter_expr = f'title == "{title_filter}"'
         
         # Route to appropriate search logic
-        if search_type == "hybrid":
-            return await perform_hybrid_search(request.query, request.limit, filter_expr, request.return_text)
-        elif search_type == "bm25":
-            return await perform_bm25_search(request.query, request.limit, filter_expr, request.return_text)
-        elif search_type == "semantic":
-            return await perform_semantic_search(request.query, request.limit, filter_expr, request.return_text)
-        elif search_type == "exact":
-            return await perform_exact_search(request.query, request.limit, filter_expr, request.return_text)
+        if search_type_lower == "hybrid":
+            return await perform_hybrid_search(query, limit, filter_expr, return_text)
+        elif search_type_lower == "bm25":
+            return await perform_bm25_search(query, limit, filter_expr, return_text)
+        elif search_type_lower == "semantic":
+            return await perform_semantic_search(query, limit, filter_expr, return_text)
+        elif search_type_lower == "exact":
+            return await perform_exact_search(query, limit, filter_expr, return_text)
             
     except HTTPException:
         raise

@@ -74,20 +74,20 @@ Once the server is running, visit:
 ## API Endpoints
 
 ### 1. Unified Search
-**POST** `/search`
+**GET** `/search`
 
-Single unified endpoint supporting all search types.
+Single unified endpoint supporting all search types via query parameters.
 
-**Request Body**:
-```json
-{
-  "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-  "search_type": "hybrid",
-  "limit": 10,
-  "filter": {
-    "title": "Dorjee"
-  }
-}
+**Query Parameters**:
+- `query` (required): The search query text
+- `search_type` (optional): Type of search - `hybrid`, `bm25`, `semantic`, or `exact` (default: `hybrid`)
+- `limit` (optional): Maximum results to return, 1-100 (default: `10`)
+- `return_text` (optional): Return full text or just IDs (default: `true`)
+- `title_filter` (optional): Filter results by title
+
+**Example URL**:
+```
+GET /search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=hybrid&limit=10&return_text=true
 ```
 
 **Search Types**:
@@ -137,7 +137,7 @@ Check API health status.
 | `search_type` | string | No | `"hybrid"` | Search type: `"hybrid"`, `"bm25"`, `"semantic"`, or `"exact"` |
 | `limit` | integer | No | 10 | Maximum results to return (1-100) |
 | `return_text` | boolean | No | `true` | If `true`, return full text in results. If `false`, return only ID and distance |
-| `filter.title` | string | No | - | Filter results by title |
+| `title_filter` | string | No | - | Filter results by title |
 
 ## Example Usage
 
@@ -145,71 +145,32 @@ Check API health status.
 
 **Hybrid Search (default)**:
 ```bash
-curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-    "limit": 5
-  }'
+curl "http://localhost:8000/search?query=ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ&limit=5"
 ```
 
 **BM25 Search**:
 ```bash
-curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-    "search_type": "bm25",
-    "limit": 10
-  }'
+curl "http://localhost:8000/search?query=ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ&search_type=bm25&limit=10"
 ```
 
 **Semantic Search**:
 ```bash
-curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "how to worry less?",
-    "search_type": "semantic",
-    "limit": 10
-  }'
+curl "http://localhost:8000/search?query=how%20to%20worry%20less?&search_type=semantic&limit=10"
 ```
 
 **Exact Match Search**:
 ```bash
-curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
-    "search_type": "exact",
-    "limit": 10
-  }'
+curl "http://localhost:8000/search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=exact&limit=10"
 ```
 
-**With Filter**:
+**With Title Filter**:
 ```bash
-curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
-    "search_type": "hybrid",
-    "limit": 10,
-    "filter": {
-      "title": "Dorjee"
-    }
-  }'
+curl "http://localhost:8000/search?query=ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ&search_type=hybrid&limit=10&title_filter=Dorjee"
 ```
 
 **Return IDs Only (without text)**:
 ```bash
-curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
-    "search_type": "bm25",
-    "limit": 10,
-    "return_text": false
-  }'
+curl "http://localhost:8000/search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=bm25&limit=10&return_text=false"
 ```
 
 ### Using Python
@@ -217,55 +178,54 @@ curl -X POST "http://localhost:8000/search" \
 ```python
 import requests
 
-url = "http://localhost:8000/search"
+base_url = "http://localhost:8000/search"
 
 # Hybrid search (default)
-payload = {
+params = {
     "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
     "limit": 10
 }
 
-response = requests.post(url, json=payload)
+response = requests.get(base_url, params=params)
 results = response.json()
 
 print(f"Found {results['count']} results using {results['search_type']} search")
 for result in results['results']:
     print(f"ID: {result['id']}, Distance: {result['distance']}")
-    print(f"Title: {result['entity']['title']}")
+    if 'text' in result['entity']:
+        print(f"Text: {result['entity']['text']}")
 
 # Exact match search
-exact_payload = {
+exact_params = {
     "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
     "search_type": "exact",
     "limit": 10
 }
 
-response = requests.post(url, json=exact_payload)
+response = requests.get(base_url, params=exact_params)
 results = response.json()
 print(f"\nExact match found {results['count']} results")
 
-# With filters
-filtered_payload = {
+# Semantic search with title filter
+filtered_params = {
     "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
     "search_type": "semantic",
     "limit": 10,
-    "filter": {
-        "title": "Dorjee"
-    }
+    "title_filter": "Dorjee"
 }
 
-response = requests.post(url, json=filtered_payload)
+response = requests.get(base_url, params=filtered_params)
 results = response.json()
 
 # Return IDs only (without text) for faster response
-ids_only_payload = {
+ids_only_params = {
     "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
     "search_type": "hybrid",
     "limit": 100,
     "return_text": False
 }
 
-response = requests.post(url, json=ids_only_payload)
+response = requests.get(base_url, params=ids_only_params)
 results = response.json()
 print(f"Found {results['count']} IDs")
 for result in results['results']:
@@ -276,18 +236,12 @@ for result in results['results']:
 
 ```javascript
 // Hybrid search (default)
-const searchData = {
+const params = new URLSearchParams({
   query: "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
   limit: 10
-};
+});
 
-fetch('http://localhost:8000/search', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify(searchData),
-})
+fetch(`http://localhost:8000/search?${params}`)
   .then(response => response.json())
   .then(data => {
     console.log('Search Results:', data);
@@ -295,44 +249,47 @@ fetch('http://localhost:8000/search', {
   });
 
 // Exact match search
-const exactSearchData = {
+const exactParams = new URLSearchParams({
   query: "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
   search_type: "exact",
   limit: 10
-};
+});
 
-fetch('http://localhost:8000/search', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify(exactSearchData),
-})
+fetch(`http://localhost:8000/search?${exactParams}`)
   .then(response => response.json())
   .then(data => {
     console.log('Exact Match Results:', data);
   });
 
-// Semantic search with filter
-const semanticSearchData = {
+// Semantic search with title filter
+const semanticParams = new URLSearchParams({
   query: "how to worry less?",
   search_type: "semantic",
   limit: 10,
-  filter: {
-    title: "Dorjee"
-  }
-};
+  title_filter: "Dorjee"
+});
 
-fetch('http://localhost:8000/search', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify(semanticSearchData),
-})
+fetch(`http://localhost:8000/search?${semanticParams}`)
   .then(response => response.json())
   .then(data => {
     console.log('Semantic Search Results:', data);
+  });
+
+// Return IDs only (without text)
+const idsOnlyParams = new URLSearchParams({
+  query: "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+  search_type: "hybrid",
+  limit: 100,
+  return_text: false
+});
+
+fetch(`http://localhost:8000/search?${idsOnlyParams}`)
+  .then(response => response.json())
+  .then(data => {
+    console.log(`Found ${data.count} IDs`);
+    data.results.forEach(result => {
+      console.log(`ID: ${result.id}, Distance: ${result.distance}`);
+    });
   });
 ```
 
