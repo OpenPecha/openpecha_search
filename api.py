@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -58,10 +58,46 @@ class SearchFilter(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., description="The search query text", min_length=1)
-    search_type: str = Field("hybrid", description="Type of search: 'hybrid', 'bm25', 'semantic', or 'exact'")
-    limit: int = Field(10, description="Maximum number of results to return", ge=1, le=100)
+    query: str = Field(..., description="The search query text", min_length=1, examples=["དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །"])
+    search_type: str = Field("hybrid", description="Type of search: 'hybrid', 'bm25', 'semantic', or 'exact'", examples=["hybrid"])
+    limit: int = Field(10, description="Maximum number of results to return", ge=1, le=100, examples=[10])
+    return_text: bool = Field(True, description="If True, return full text in results. If False, return only ID and distance", examples=[True])
     filter: Optional[SearchFilter] = Field(None, description="Optional filters to apply")
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+                    "search_type": "hybrid",
+                    "limit": 10,
+                    "return_text": True,
+                    "filter": None
+                },
+                {
+                    "query": "how to worry less?",
+                    "search_type": "semantic",
+                    "limit": 5,
+                    "return_text": True,
+                    "filter": None
+                },
+                {
+                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+                    "search_type": "exact",
+                    "limit": 10,
+                    "return_text": True,
+                    "filter": None
+                },
+                {
+                    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+                    "search_type": "bm25",
+                    "limit": 10,
+                    "return_text": False,
+                    "filter": None
+                }
+            ]
+        }
+    }
 
 
 class SearchResult(BaseModel):
@@ -75,6 +111,48 @@ class SearchResponse(BaseModel):
     search_type: str
     results: List[SearchResult]
     count: int
+    
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+                    "search_type": "hybrid",
+                    "results": [
+                        {
+                            "id": "449691587532670411",
+                            "distance": 0.95,
+                            "entity": {
+                                "text": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །གང་ཕྱིར་འདི་དག་རང་བཞིན་མེད།"
+                            }
+                        },
+                        {
+                            "id": "449691587532670412",
+                            "distance": 0.87,
+                            "entity": {
+                                "text": "སངས་རྒྱས་ཀྱི་བསྟན་པ་ལ་གུས་པར་བྱོས།"
+                            }
+                        }
+                    ],
+                    "count": 2
+                },
+                {
+                    "query": "how to worry less?",
+                    "search_type": "semantic",
+                    "results": [
+                        {
+                            "id": "449691587532670413",
+                            "distance": 0.82,
+                            "entity": {
+                                "text": "སེམས་ཅན་ཐམས་ཅད་བདེ་བར་གྱུར་ཅིག"
+                            }
+                        }
+                    ],
+                    "count": 1
+                }
+            ]
+        }
+    }
 
 
 # Helper function to generate embeddings
@@ -145,7 +223,76 @@ async def root():
 
 
 @app.post("/search", response_model=SearchResponse)
-async def unified_search(request: SearchRequest):
+async def unified_search(
+    request: SearchRequest = Body(
+        ...,
+        openapi_examples={
+            "hybrid_search": {
+                "summary": "Hybrid Search (Default)",
+                "description": "Combines BM25 and semantic search for balanced results",
+                "value": {
+                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+                    "search_type": "hybrid",
+                    "limit": 10,
+                    "return_text": True
+                }
+            },
+            "bm25_search": {
+                "summary": "BM25 Search",
+                "description": "Keyword-based search for term frequency matching",
+                "value": {
+                    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+                    "search_type": "bm25",
+                    "limit": 5,
+                    "return_text": True
+                }
+            },
+            "semantic_search": {
+                "summary": "Semantic Search",
+                "description": "AI-powered meaning-based search",
+                "value": {
+                    "query": "how to worry less?",
+                    "search_type": "semantic",
+                    "limit": 10,
+                    "return_text": True
+                }
+            },
+            "exact_match": {
+                "summary": "Exact Phrase Match",
+                "description": "Find exact quotes using PHRASE_MATCH",
+                "value": {
+                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+                    "search_type": "exact",
+                    "limit": 10,
+                    "return_text": True
+                }
+            },
+            "ids_only": {
+                "summary": "Return IDs Only",
+                "description": "Get only IDs and distances without text",
+                "value": {
+                    "query": "ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ",
+                    "search_type": "hybrid",
+                    "limit": 10,
+                    "return_text": False
+                }
+            },
+            "with_filter": {
+                "summary": "Search with Filter",
+                "description": "Search with title filter applied",
+                "value": {
+                    "query": "སངས་རྒྱས་",
+                    "search_type": "hybrid",
+                    "limit": 10,
+                    "return_text": True,
+                    "filter": {
+                        "title": "Dorjee"
+                    }
+                }
+            }
+        }
+    )
+):
     """
     Unified search endpoint supporting multiple search types.
     
@@ -154,6 +301,9 @@ async def unified_search(request: SearchRequest):
     - bm25: Keyword-based matching, best for exact term matching
     - semantic: Meaning-based matching, best for conceptually similar content
     - exact: Exact phrase matching using PHRASE_MATCH, best for finding exact quotes
+    
+    Parameters:
+    - return_text: If True (default), returns full text in results. If False, returns only ID and distance.
     """
     try:
         search_type = request.search_type.lower()
@@ -171,13 +321,13 @@ async def unified_search(request: SearchRequest):
         
         # Route to appropriate search logic
         if search_type == "hybrid":
-            return await perform_hybrid_search(request.query, request.limit, filter_expr)
+            return await perform_hybrid_search(request.query, request.limit, filter_expr, request.return_text)
         elif search_type == "bm25":
-            return await perform_bm25_search(request.query, request.limit, filter_expr)
+            return await perform_bm25_search(request.query, request.limit, filter_expr, request.return_text)
         elif search_type == "semantic":
-            return await perform_semantic_search(request.query, request.limit, filter_expr)
+            return await perform_semantic_search(request.query, request.limit, filter_expr, request.return_text)
         elif search_type == "exact":
-            return await perform_exact_search(request.query, request.limit, filter_expr)
+            return await perform_exact_search(request.query, request.limit, filter_expr, request.return_text)
             
     except HTTPException:
         raise
@@ -186,7 +336,7 @@ async def unified_search(request: SearchRequest):
 
 
 # Internal search functions
-async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[str], return_text: bool = True) -> SearchResponse:
     """Perform hybrid search combining BM25 and semantic search."""
     # Get embedding for semantic search
     embedding = get_embedding(query)
@@ -213,6 +363,9 @@ async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[st
         search_param_2["expr"] = filter_expr
     request_2 = AnnSearchRequest(**search_param_2)
     
+    # Determine output fields based on return_text parameter
+    output_fields = ['text'] if return_text else []
+    
     # Perform hybrid search
     ranker = RRFRanker()
     results = milvus_client.hybrid_search(
@@ -220,21 +373,24 @@ async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[st
         reqs=[request_1, request_2],
         ranker=ranker,
         limit=limit,
-        output_fields=['text']  # Request text field instead
+        output_fields=output_fields
     )
     
     return format_results(results, query, "hybrid")
 
 
-async def perform_bm25_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+async def perform_bm25_search(query: str, limit: int, filter_expr: Optional[str], return_text: bool = True) -> SearchResponse:
     """Perform BM25 (sparse vector) search."""
+    # Determine output fields based on return_text parameter
+    output_fields = ['text'] if return_text else []
+    
     # Prepare search parameters
     search_params = {
         "collection_name": MILVUS_COLLECTION_NAME,
         "data": [query],
         "anns_field": "sparce_vector",
         "limit": limit,
-        "output_fields": ['text']  # Request text field instead
+        "output_fields": output_fields
     }
     
     if filter_expr:
@@ -246,10 +402,13 @@ async def perform_bm25_search(query: str, limit: int, filter_expr: Optional[str]
     return format_results(results, query, "bm25")
 
 
-async def perform_semantic_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+async def perform_semantic_search(query: str, limit: int, filter_expr: Optional[str], return_text: bool = True) -> SearchResponse:
     """Perform semantic (dense vector) search."""
     # Get embedding
     embedding = get_embedding(query)
+    
+    # Determine output fields based on return_text parameter
+    output_fields = ['text'] if return_text else []
     
     # Prepare search parameters
     search_params = {
@@ -257,7 +416,7 @@ async def perform_semantic_search(query: str, limit: int, filter_expr: Optional[
         "data": [embedding],
         "anns_field": "dense_vector",
         "limit": limit,
-        "output_fields": ['text']  # Request text field instead
+        "output_fields": output_fields
     }
     
     if filter_expr:
@@ -269,7 +428,7 @@ async def perform_semantic_search(query: str, limit: int, filter_expr: Optional[
     return format_results(results, query, "semantic")
 
 
-async def perform_exact_search(query: str, limit: int, filter_expr: Optional[str]) -> SearchResponse:
+async def perform_exact_search(query: str, limit: int, filter_expr: Optional[str], return_text: bool = True) -> SearchResponse:
     """Perform exact phrase match search."""
     # Escape single quotes in query to prevent filter syntax errors
     escaped_query = query.replace("'", "\\'")
@@ -283,13 +442,16 @@ async def perform_exact_search(query: str, limit: int, filter_expr: Optional[str
     else:
         final_filter = phrase_filter
     
+    # Determine output fields based on return_text parameter
+    output_fields = ['text'] if return_text else []
+    
     # Prepare search parameters
     search_params = {
         "collection_name": MILVUS_COLLECTION_NAME,
         "data": [query],
         "anns_field": "sparce_vector",
         "limit": limit,
-        "output_fields": ['text'],  # Request text field
+        "output_fields": output_fields,
         "filter": final_filter
     }
     

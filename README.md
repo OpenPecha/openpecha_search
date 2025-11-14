@@ -136,6 +136,7 @@ Check API health status.
 | `query` | string | Yes | - | The search query text |
 | `search_type` | string | No | `"hybrid"` | Search type: `"hybrid"`, `"bm25"`, `"semantic"`, or `"exact"` |
 | `limit` | integer | No | 10 | Maximum results to return (1-100) |
+| `return_text` | boolean | No | `true` | If `true`, return full text in results. If `false`, return only ID and distance |
 | `filter.title` | string | No | - | Filter results by title |
 
 ## Example Usage
@@ -199,6 +200,18 @@ curl -X POST "http://localhost:8000/search" \
   }'
 ```
 
+**Return IDs Only (without text)**:
+```bash
+curl -X POST "http://localhost:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+    "search_type": "bm25",
+    "limit": 10,
+    "return_text": false
+  }'
+```
+
 ### Using Python
 
 ```python
@@ -243,6 +256,20 @@ filtered_payload = {
 
 response = requests.post(url, json=filtered_payload)
 results = response.json()
+
+# Return IDs only (without text) for faster response
+ids_only_payload = {
+    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+    "search_type": "hybrid",
+    "limit": 100,
+    "return_text": False
+}
+
+response = requests.post(url, json=ids_only_payload)
+results = response.json()
+print(f"Found {results['count']} IDs")
+for result in results['results']:
+    print(f"ID: {result['id']}, Distance: {result['distance']}")
 ```
 
 ### Using JavaScript
