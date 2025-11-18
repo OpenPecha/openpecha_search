@@ -285,6 +285,41 @@ async def unified_search(
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
+@app.post("/search", response_model=SearchResponse)
+async def unified_search_post(req: SearchRequest):
+    """
+    Unified search endpoint (POST) accepting JSON body.
+    Mirrors the GET /search behavior using the SearchRequest schema.
+    """
+    try:
+        search_type_lower = req.search_type.lower()
+        
+        # Validate search type
+        valid_types = ["hybrid", "bm25", "semantic", "exact"]
+        if search_type_lower not in valid_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid search_type. Must be one of: {', '.join(valid_types)}"
+            )
+        
+        # Build filter expression from structured filter
+        filter_expr = build_filter_expression(req.filter)
+        
+        # Route to appropriate search logic
+        if search_type_lower == "hybrid":
+            return await perform_hybrid_search(req.query, req.limit, filter_expr, req.return_text)
+        elif search_type_lower == "bm25":
+            return await perform_bm25_search(req.query, req.limit, filter_expr, req.return_text)
+        elif search_type_lower == "semantic":
+            return await perform_semantic_search(req.query, req.limit, filter_expr, req.return_text)
+        elif search_type_lower == "exact":
+            return await perform_exact_search(req.query, req.limit, filter_expr, req.return_text)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
 # Internal search functions
 async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[str], return_text: bool = True) -> SearchResponse:
     """Perform hybrid search combining BM25 and semantic search."""
