@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -55,6 +55,7 @@ doc_cfg = EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", output_dimensionali
 # Pydantic models
 class SearchFilter(BaseModel):
     title: Optional[str] = Field(None, description="Filter results by title")
+    language: Optional[str] = Field(None, description="Filter results by language")
 
 
 class SearchRequest(BaseModel):
@@ -62,6 +63,8 @@ class SearchRequest(BaseModel):
     search_type: str = Field("hybrid", description="Type of search: 'hybrid', 'bm25', 'semantic', or 'exact'", examples=["hybrid"])
     limit: int = Field(10, description="Maximum number of results to return", ge=1, le=100, examples=[10])
     return_text: bool = Field(True, description="If True, return full text in results. If False, return only ID and distance", examples=[True])
+    hierarchical: bool = Field(False, description="If true, perform parent->children two-stage search and return only children", examples=[False])
+    parent_limit: Optional[int] = Field(None, description="Max parents to retrieve when hierarchical=true; defaults to 'limit'", ge=1, le=200, examples=[20])
     filter: Optional[SearchFilter] = Field(None, description="Optional filters to apply")
     
     model_config = {
@@ -94,6 +97,15 @@ class SearchRequest(BaseModel):
                     "limit": 10,
                     "return_text": False,
                     "filter": None
+                },
+                {
+                    "query": "དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །",
+                    "search_type": "hybrid",
+                    "limit": 10,
+                    "parent_limit": 20,
+                    "hierarchical": True,
+                    "return_text": True,
+                    "filter": {"title": "Some Title"}
                 }
             ]
         }
@@ -178,8 +190,30 @@ def build_filter_expression(filter_obj: Optional[SearchFilter]) -> Optional[str]
     conditions = []
     if filter_obj.title:
         conditions.append(f'title == "{filter_obj.title}"')
+    if filter_obj.language:
+        conditions.append(f'language == "{filter_obj.language}"')
     
     return " && ".join(conditions) if conditions else None
+
+
+# Helpers for hierarchical filtering
+def _escape_milvus_string(value: str) -> str:
+    """Escape characters for use inside Milvus string literals."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def combine_filters(*filters: Optional[str]) -> Optional[str]:
+    """Combine multiple filter expressions using logical AND."""
+    parts = [f for f in filters if f]
+    return " && ".join(parts) if parts else None
+
+
+def build_children_filter_from_parents(parent_ids: List[Any]) -> Optional[str]:
+    """Build a filter expression for children of the given parent ids."""
+    if not parent_ids:
+        return None
+    quoted = '", "'.join(_escape_milvus_string(str(pid)) for pid in parent_ids)
+    return f'parent_id in ["{quoted}"]'
 
 
 # Helper function to format results
@@ -222,67 +256,6 @@ async def root():
     }
 
 
-@app.get("/search", response_model=SearchResponse)
-async def unified_search(
-    query: str = Query(..., description="The search query text", example="དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད། །"),
-    search_type: str = Query("hybrid", description="Type of search: 'hybrid', 'bm25', 'semantic', or 'exact'", example="hybrid"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of results to return (1-100)", example=10),
-    return_text: bool = Query(True, description="If True, return full text in results. If False, return only ID and distance", example=True),
-    title_filter: Optional[str] = Query(None, description="Optional filter by title", example=None)
-):
-    """
-    Unified search endpoint supporting multiple search types.
-    
-    **Search Types:**
-    - `hybrid`: Combines BM25 (sparse) and semantic (dense) search using RRF ranking (default)
-    - `bm25`: Keyword-based matching, best for exact term matching
-    - `semantic`: Meaning-based matching, best for conceptually similar content
-    - `exact`: Exact phrase matching using PHRASE_MATCH, best for finding exact quotes
-    
-    **Parameters:**
-    - `query`: The search query text (required)
-    - `search_type`: Type of search (default: "hybrid")
-    - `limit`: Maximum results to return (default: 10, max: 100)
-    - `return_text`: Return full text or just IDs (default: true)
-    - `title_filter`: Optional filter by title field
-    
-    **Examples:**
-    - Hybrid: `/search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=hybrid&limit=10`
-    - BM25: `/search?query=ཕམ་པར་གྱུར་བའི་ཆོས་དུན་པ&search_type=bm25&limit=5`
-    - Semantic: `/search?query=how to worry less?&search_type=semantic&limit=10`
-    - Exact: `/search?query=དེ་ལ་མི་དགར་ཅི་ཞིག་ཡོད།&search_type=exact&limit=10`
-    - IDs Only: `/search?query=test&search_type=hybrid&return_text=false`
-    """
-    try:
-        search_type_lower = search_type.lower()
-        
-        # Validate search type
-        valid_types = ["hybrid", "bm25", "semantic", "exact"]
-        if search_type_lower not in valid_types:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Invalid search_type. Must be one of: {', '.join(valid_types)}"
-            )
-        
-        # Build filter expression from title_filter
-        filter_expr = None
-        if title_filter:
-            filter_expr = f'title == "{title_filter}"'
-        
-        # Route to appropriate search logic
-        if search_type_lower == "hybrid":
-            return await perform_hybrid_search(query, limit, filter_expr, return_text)
-        elif search_type_lower == "bm25":
-            return await perform_bm25_search(query, limit, filter_expr, return_text)
-        elif search_type_lower == "semantic":
-            return await perform_semantic_search(query, limit, filter_expr, return_text)
-        elif search_type_lower == "exact":
-            return await perform_exact_search(query, limit, filter_expr, return_text)
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -302,18 +275,49 @@ async def unified_search_post(req: SearchRequest):
                 detail=f"Invalid search_type. Must be one of: {', '.join(valid_types)}"
             )
         
-        # Build filter expression from structured filter
-        filter_expr = build_filter_expression(req.filter)
+        # Build base filter expression from structured filter
+        base_filter_expr = build_filter_expression(req.filter)
         
-        # Route to appropriate search logic
+        # If not hierarchical, run single-stage as before
+        if not req.hierarchical:
+            if search_type_lower == "hybrid":
+                return await perform_hybrid_search(req.query, req.limit, base_filter_expr, req.return_text)
+            elif search_type_lower == "bm25":
+                return await perform_bm25_search(req.query, req.limit, base_filter_expr, req.return_text)
+            elif search_type_lower == "semantic":
+                return await perform_semantic_search(req.query, req.limit, base_filter_expr, req.return_text)
+            elif search_type_lower == "exact":
+                return await perform_exact_search(req.query, req.limit, base_filter_expr, req.return_text)
+        
+        # Hierarchical: parents -> children; return only children
+        parent_limit = req.parent_limit if req.parent_limit is not None else req.limit
+        parent_stage_filter = combine_filters(base_filter_expr, 'parent_id == ""')
+        
+        # Stage 1: parents (no text needed)
         if search_type_lower == "hybrid":
-            return await perform_hybrid_search(req.query, req.limit, filter_expr, req.return_text)
+            parent_resp = await perform_hybrid_search(req.query, parent_limit, parent_stage_filter, return_text=False)
         elif search_type_lower == "bm25":
-            return await perform_bm25_search(req.query, req.limit, filter_expr, req.return_text)
+            parent_resp = await perform_bm25_search(req.query, parent_limit, parent_stage_filter, return_text=False)
         elif search_type_lower == "semantic":
-            return await perform_semantic_search(req.query, req.limit, filter_expr, req.return_text)
-        elif search_type_lower == "exact":
-            return await perform_exact_search(req.query, req.limit, filter_expr, req.return_text)
+            parent_resp = await perform_semantic_search(req.query, parent_limit, parent_stage_filter, return_text=False)
+        else:  # exact
+            parent_resp = await perform_exact_search(req.query, parent_limit, parent_stage_filter, return_text=False)
+        
+        parent_ids = [r.id for r in parent_resp.results]
+        if not parent_ids:
+            return SearchResponse(query=req.query, search_type=search_type_lower, results=[], count=0)
+        
+        children_filter_expr = combine_filters(base_filter_expr, build_children_filter_from_parents(parent_ids))
+        
+        # Stage 2: children (respect return_text)
+        if search_type_lower == "hybrid":
+            return await perform_hybrid_search(req.query, req.limit, children_filter_expr, req.return_text)
+        elif search_type_lower == "bm25":
+            return await perform_bm25_search(req.query, req.limit, children_filter_expr, req.return_text)
+        elif search_type_lower == "semantic":
+            return await perform_semantic_search(req.query, req.limit, children_filter_expr, req.return_text)
+        else:  # exact
+            return await perform_exact_search(req.query, req.limit, children_filter_expr, req.return_text)
     except HTTPException:
         raise
     except Exception as e:
@@ -349,7 +353,7 @@ async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[st
     request_2 = AnnSearchRequest(**search_param_2)
     
     # Determine output fields based on return_text parameter
-    output_fields = ['text'] if return_text else []
+    output_fields = ['text','language'] if return_text else []
     
     # Perform hybrid search
     ranker = RRFRanker()
@@ -367,7 +371,7 @@ async def perform_hybrid_search(query: str, limit: int, filter_expr: Optional[st
 async def perform_bm25_search(query: str, limit: int, filter_expr: Optional[str], return_text: bool = True) -> SearchResponse:
     """Perform BM25 (sparse vector) search."""
     # Determine output fields based on return_text parameter
-    output_fields = ['text'] if return_text else []
+    output_fields = ['text','language'] if return_text else []
     
     # Prepare search parameters
     search_params = {
@@ -393,7 +397,7 @@ async def perform_semantic_search(query: str, limit: int, filter_expr: Optional[
     embedding = get_embedding(query)
     
     # Determine output fields based on return_text parameter
-    output_fields = ['text'] if return_text else []
+    output_fields = ['text','language'] if return_text else []
     
     # Prepare search parameters
     search_params = {
