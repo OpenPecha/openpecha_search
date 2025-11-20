@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import os
 from dotenv import load_dotenv
 from google import genai
@@ -55,7 +55,7 @@ doc_cfg = EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", output_dimensionali
 # Pydantic models
 class SearchFilter(BaseModel):
     title: Optional[str] = Field(None, description="Filter results by title")
-    language: Optional[str] = Field(None, description="Filter results by language")
+    language: Optional[Union[str, List[str]]] = Field(None, description="Filter results by language or list of languages")
 
 
 class SearchRequest(BaseModel):
@@ -191,7 +191,13 @@ def build_filter_expression(filter_obj: Optional[SearchFilter]) -> Optional[str]
     if filter_obj.title:
         conditions.append(f'title == "{filter_obj.title}"')
     if filter_obj.language:
-        conditions.append(f'language == "{filter_obj.language}"')
+        # Support single string or list of strings for language filter
+        if isinstance(filter_obj.language, list):
+            langs = [ _escape_milvus_string(str(lang)) for lang in filter_obj.language if str(lang).strip() != "" ]
+            if langs:
+                conditions.append(f'language in ["{"\", \"".join(langs)}"]')
+        else:
+            conditions.append(f'language == "{_escape_milvus_string(str(filter_obj.language))}"')
     
     return " && ".join(conditions) if conditions else None
 
