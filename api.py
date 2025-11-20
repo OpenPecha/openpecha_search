@@ -54,7 +54,7 @@ doc_cfg = EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT", output_dimensionali
 
 # Pydantic models
 class SearchFilter(BaseModel):
-    title: Optional[str] = Field(None, description="Filter results by title")
+    title: Optional[Union[str, List[str]]] = Field(None, description="Filter results by title or list of titles")
     language: Optional[Union[str, List[str]]] = Field(None, description="Filter results by language or list of languages")
 
 
@@ -189,7 +189,13 @@ def build_filter_expression(filter_obj: Optional[SearchFilter]) -> Optional[str]
     
     conditions = []
     if filter_obj.title:
-        conditions.append(f'title == "{filter_obj.title}"')
+        # Support single string or list of strings for title filter
+        if isinstance(filter_obj.title, list):
+            titles = [ _escape_milvus_string(str(title)) for title in filter_obj.title if str(title).strip() != "" ]
+            if titles:
+                conditions.append(f'title in ["{"\", \"".join(titles)}"]')
+        else:
+            conditions.append(f'title == "{_escape_milvus_string(str(filter_obj.title))}"')
     if filter_obj.language:
         # Support single string or list of strings for language filter
         if isinstance(filter_obj.language, list):
