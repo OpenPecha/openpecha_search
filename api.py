@@ -14,7 +14,7 @@ load_dotenv()
 # Get credentials from environment variables
 MILVUS_URI = os.getenv("MILVUS_URI")
 MILVUS_TOKEN = os.getenv("MILVUS_TOKEN")
-MILVUS_COLLECTION_NAME = os.getenv("MILVUS_COLLECTION_NAME", "test_kangyur_tengyur")
+MILVUS_COLLECTION_NAME = os.getenv("MILVUS_COLLECTION_NAME", "production")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Validate required environment variables
